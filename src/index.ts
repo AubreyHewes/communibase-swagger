@@ -1,7 +1,7 @@
 import { Connector } from "communibase-connector-js";
-import { Schema, Spec } from "swagger-schema-official";
+import { Path, Schema, Spec } from "swagger-schema-official";
 import { parse } from "url";
-import { ICbEntity, parseEntityType } from "./parser";
+import { ICbEntity, parseEntityTypeDefinition, parseEntityTypePaths } from "./parser";
 
 export interface ICBSwaggerGeneratorOptions {
   apiKey: string;
@@ -19,32 +19,41 @@ export default async ({
   if (serviceUrl) {
     cbc.setServiceUrl(serviceUrl);
   }
-  const entityTypes = await cbc.getAll<ICbEntity>("EntityType");
+  const entityTypes: ICbEntity[] = [
+    {
+      title: "EntityType",
+      attributes: [
+        {
+          title: "_id",
+          type: "ObjectId"
+        }
+      ],
+      isResource: true
+    }
+  ].concat(await cbc.getAll<ICbEntity>("EntityType"));
+
+  let paths: { [title: string]: Path } = {
+  };
 
   const definitions: { [title: string]: Schema } = {
     ObjectId: {
       type: "string",
       minLength: 24,
       maxLength: 24
-    },
-    // TODO full EntityType definition
-    EntityType: {
-      type: "object",
-      properties: {
-        _id: {
-          $ref: "#/definitions/ObjectId"
-        }
-      }
     }
   };
 
   entityTypes.forEach(entityType => {
-    definitions[entityType.title] = parseEntityType(entityType);
+    if (entityType.isResource) {
+      paths = { ...paths, ...parseEntityTypePaths(entityType)} as any; // hmz
+    }
+    definitions[entityType.title] = parseEntityTypeDefinition(entityType);
   });
 
   // TODO get from Connector.getServiceUrl ? (though needs to be exposed)
   const url = parse(serviceUrl || "https://api.communibase.nl/0.1/");
 
+  // TODO support other openapi specifications
   return {
     swagger: "2.0",
     info: {
@@ -56,33 +65,18 @@ export default async ({
     basePath: url.pathname,
     tags: [],
     schemes: [(url.protocol as string).replace(":", "")],
+    consumes: ["application/json"],
     produces: ["application/json"],
 
-    // TODO full Paths definition
-    paths: {
-      "/EntityType.json/crud": {
-        get: {
-          description: "Get all Entity types",
-          parameters: [
-            {
-              name: "token",
-              in: "query",
-              type: "string",
-              description: "A token as retrieved via /auth/login",
-              required: true
-            }
-          ],
-          responses: {
-            "200": {
-              description: "OK",
-              schema: {
-                $ref: "#/definitions/EntityType"
-              }
-            }
-          }
-        }
+    securityDefinitions: {
+      token_in_query: {
+        type: "apiKey",
+        name: "token",
+        in: "query"
       }
     },
+
+    paths,
     definitions
   };
 };
